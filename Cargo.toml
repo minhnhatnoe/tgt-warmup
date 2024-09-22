@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 tungstenite = "0.24.0"
 tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12.7", features = ["json"] }
+serde_json = "1.0.128"
