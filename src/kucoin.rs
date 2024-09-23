@@ -1,13 +1,15 @@
 use std::error::Error;
 use std::time::Duration;
 
+use tungstenite::{handshake::client::Response, stream::MaybeTlsStream, WebSocket};
+use std::net::TcpStream;
+
 const DEFAULT_API_DOMAIN: &str = "https://api.kucoin.com";
 const DEFAULT_TOKEN_ENDPOINT: &str = "/api/v1/bullet-public";
 
 #[derive(Debug)]
 pub struct WebSocketClient {
     wss_domain: String,
-
     token: String,
     ping_interval: Duration,
 }
@@ -54,12 +56,39 @@ impl WebSocketClient {
         WebSocketClient {
             wss_domain,
             token,
-            ping_interval
+            ping_interval,
         }
+    }
+}
+
+pub struct WebSocketSession {
+    wsc: WebSocketClient,
+    net_client: WebSocket<MaybeTlsStream<TcpStream>>,
+
+    ping_thread: std::thread::JoinHandle<()>,
+}
+
+impl WebSocketSession {
+    pub fn start(wsc: WebSocketClient) -> Result<(WebSocketSession, Response), tungstenite::Error> {
+        let (net_client, response) = tungstenite::connect(
+                format!("{}?token={}", wsc.wss_domain, wsc.token))?;
+        
+        let ping_thread = std::thread::spawn(move || {
+            loop {
+                net_client.send(tungstenite::Message::Text("{}"));
+                std::thread::sleep(wsc.ping_interval);
+            }
+        });
+
+        let session = WebSocketSession {
+            wsc,
+            net_client,
+            ping_thread,
+        };
+
+        Ok((session, response))
     }
 
     fn send(&self) {
-        
     }
-
 }
