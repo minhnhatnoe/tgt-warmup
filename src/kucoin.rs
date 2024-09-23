@@ -1,8 +1,4 @@
-use std::error::Error;
-use std::time::Duration;
-
-use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+use std::{error::Error, net::TcpStream, sync::{Arc, Mutex}, time::Duration};
 
 use serde_json::json;
 use tungstenite::{handshake::client::Response, stream::MaybeTlsStream, WebSocket};
@@ -77,80 +73,81 @@ impl WebSocketClient {
     }
 }
 
+#[derive(Debug)]
+pub enum WebSocketMessage {
+    Welcome,
+    Pong(String),
+    Ack(String),
+    Message(serde_json::Value),
+}
+
+impl WebSocketMessage {
+    pub fn from_string(msg_str: String) -> Self {
+        let msg: serde_json::Value = serde_json::from_str(msg_str.as_str()).expect("msg");
+
+        let msg_type = msg
+            .get("type")
+            .expect("Cannot get message type")
+            .as_str()
+            .expect("Message type is not string");
+
+        match msg_type {
+            "welcome" => WebSocketMessage::Welcome,
+            "ack" => {
+                WebSocketMessage::Ack(msg["id"].as_str().expect("Cannot get ack id").to_owned())
+            }
+            "pong" => {
+                WebSocketMessage::Pong(msg["id"].as_str().expect("Cannot get pong id").to_owned())
+            }
+            "message" => WebSocketMessage::Message(msg),
+            other_type => panic!("Message type {other_type} not expected {:?}", msg),
+        }
+    }
+}
+
 struct WebSocketSessionInner {
-    wsc: WebSocketClient,
+    client: WebSocketClient,
     net_client: Mutex<WebSocket<MaybeTlsStream<TcpStream>>>,
 }
 
 impl WebSocketSessionInner {
-    fn new(wsc: WebSocketClient) -> Result<(WebSocketSessionInner, Response), tungstenite::Error> {
+    fn new(
+        client: WebSocketClient,
+    ) -> Result<(WebSocketSessionInner, Response), tungstenite::Error> {
         let (net_client, response) =
-            tungstenite::connect(format!("{}?token={}", wsc.wss_domain, wsc.token))?;
+            tungstenite::connect(format!("{}?token={}", client.wss_domain, client.token))?;
 
         let session = WebSocketSessionInner {
-            wsc,
+            client,
             net_client: Mutex::new(net_client),
         };
-
-        match session.recv() {
-            WebSocketMessage::Welcome => println!("Received welcome"),
-            other_type => panic!("Message {:?} not expected", other_type),
-        }
 
         Ok((session, response))
     }
 
-    fn send(&self, msg: tungstenite::Message) -> Result<(), tungstenite::Error> {
-        self.net_client.lock().unwrap().send(msg)
+    fn send(&self, msg: tungstenite::Message) {
+        self.net_client
+            .lock()
+            .unwrap()
+            .send(msg)
+            .expect("Cannot send msg");
     }
 
     fn recv(&self) -> WebSocketMessage {
-        loop {
-            let msg = self
-                .net_client
-                .lock()
-                .unwrap()
-                .read()
-                .expect("msg receive failed")
-                .into_text()
-                .expect("Cannot decode received msg");
-
-            let msg: serde_json::Value = serde_json::from_str(msg.as_str()).expect("msg");
-
-            let msg_type = msg
-                .get("type")
-                .expect("Cannot get message type")
-                .as_str()
-                .expect("Message type is not string");
-
-            match msg_type {
-                "welcome" => return WebSocketMessage::Welcome,
-                "pong" => (),
-                "ack" => {
-                    let id = msg
-                        .get("id")
-                        .expect("Cannot get id of ack")
-                        .as_number()
-                        .expect("id of ack is not a number")
-                        .as_u64()
-                        .expect("id of ack is not u64");
-                    return WebSocketMessage::Ack(id);
-                }
-                other_type => panic!("Message type {other_type} not expected"),
-            }
-        }
+        let msg = self
+            .net_client
+            .lock()
+            .unwrap()
+            .read()
+            .expect("msg receive failed")
+            .into_text()
+            .expect("Cannot decode received msg");
+        WebSocketMessage::from_string(msg)
     }
-
 }
 
 pub struct WebSocketSession {
     wss: Arc<WebSocketSessionInner>,
-}
-
-#[derive(Debug)]
-enum WebSocketMessage {
-    Welcome,
-    Ack(u64),
 }
 
 impl WebSocketSession {
@@ -161,15 +158,45 @@ impl WebSocketSession {
     /// - Perform TLS handshake
     /// - Poll for welcome message
     /// - Starts a thread that regularly pings the server
-    pub fn start(wsc: WebSocketClient) -> Result<(WebSocketSession, Response), tungstenite::Error> {
-        let (session, response) = WebSocketSessionInner::new(wsc)?;
+    pub fn start(
+        client: WebSocketClient,
+    ) -> Result<(WebSocketSession, Response), tungstenite::Error> {
+        let (session, response) = WebSocketSessionInner::new(client)?;
         let session = WebSocketSession {
             wss: Arc::new(session),
         };
 
+        match session.recv() {
+            WebSocketMessage::Welcome => println!("Received welcome"),
+            other_type => panic!("Message {:?} not expected", other_type),
+        }
+
         let _handle = std::thread::spawn(session.ping_loop());
 
         Ok((session, response))
+    }
+
+    /// Subscribe to Level 2 order book updates for a given symbol.
+    /// The acknowledgement from the server is discarded.
+    pub fn subscribe_level2(&self, symbol: &str) {
+        let data = json!({
+            "id": 1,
+            "type": "subscribe",
+            "topic": format!("/contractMarket/level2Depth5:{symbol}"),
+            "response": true
+        })
+        .to_string();
+
+        self.send(tungstenite::Message::Text(data));
+    }
+
+    pub fn recv_message(&self) -> serde_json::Value {
+        let msg = match self.recv() {
+            WebSocketMessage::Message(msg) => msg,
+            other_type => panic!("Message {:?} not expected", other_type),
+        };
+
+        return msg;
     }
 
     // Ping. Discard response.
@@ -178,17 +205,30 @@ impl WebSocketSession {
         let data = json!({
             "id": 0,
             "type": "ping"
-        });
+        })
+        .to_string();
 
         move || loop {
-            let msg = tungstenite::Message::Text(data.to_string());
-            session.send(msg).expect("Ping msg send failed");
-            std::thread::sleep(session.wss.wsc.ping_interval);
+            let msg = tungstenite::Message::Text((&data).to_owned());
+            session.send(msg);
+            std::thread::sleep(session.wss.client.ping_interval);
         }
     }
 
-    fn send(&self, msg: tungstenite::Message) -> Result<(), tungstenite::Error> {
+    fn send(&self, msg: tungstenite::Message) {
         self.wss.send(msg)
+    }
+
+    fn recv(&self) -> WebSocketMessage {
+        loop {
+            let msg = self.wss.recv();
+            match msg {
+                WebSocketMessage::Message(_) | WebSocketMessage::Welcome => return msg,
+                WebSocketMessage::Ack(_) | WebSocketMessage::Pong(_) => {
+                    println!("Received {:?}", msg)
+                }
+            }
+        }
     }
 
     fn clone(&self) -> Self {
