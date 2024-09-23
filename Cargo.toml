@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tungstenite = "0.24.0"
+tungstenite = { version = "0.24.0", features = ["native-tls"] }
 reqwest = { version = "0.12.7", features = ["json", "blocking"] }
 serde_json = "1.0.128"

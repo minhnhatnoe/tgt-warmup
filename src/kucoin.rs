@@ -1,5 +1,4 @@
 use std::error::Error;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 use std::sync::{Arc, Mutex};
@@ -13,7 +12,9 @@ const DEFAULT_TOKEN_ENDPOINT: &str = "/api/v1/bullet-public";
 pub struct WebSocketClient {
     wss_domain: String,
     token: String,
+
     ping_interval: Duration,
+    ping_timeout: Duration,
 }
 
 impl WebSocketClient {
@@ -44,7 +45,12 @@ impl WebSocketClient {
             unexpected => return Err(format!("Unexpected pingInterval value: {}", unexpected).into())
         };
 
-        Ok(Self::new(wss_domain, token, ping_interval))
+        let ping_timeout = match resp["data"]["instanceServers"][0]["pingTimeout"].to_owned() {
+            serde_json::Value::Number(n) => Duration::from_millis(n.as_u64().unwrap()),
+            unexpected => return Err(format!("Unexpected pingTimeout value: {}", unexpected).into())
+        };
+
+        Ok(Self::new(wss_domain, token, ping_interval, ping_timeout))
     }
 
     /// Constructs a WebSocketClient for connecting with KuCoin's WebSocket API
@@ -54,22 +60,23 @@ impl WebSocketClient {
     /// https://api.kucoin.com/api/v1/bullet-public
     /// 
     /// Consider using `new_with_token` to populate the fields with new token.
-    pub fn new(wss_domain: String, token: String, ping_interval: Duration) -> Self {
+    pub fn new(wss_domain: String, token: String, ping_interval: Duration, ping_timeout: Duration) -> Self {
         WebSocketClient {
             wss_domain,
             token,
             ping_interval,
+            ping_timeout,
         }
     }
 }
 
-struct WebSocketSessionNonArc {
+struct WebSocketSessionInner {
     wsc: WebSocketClient,
     net_client: Mutex<WebSocket<MaybeTlsStream<TcpStream>>>,
 }
 
 pub struct WebSocketSession {
-    wss: Arc<WebSocketSessionNonArc>,
+    wss: Arc<WebSocketSessionInner>,
 }
 
 impl WebSocketSession {
@@ -78,34 +85,36 @@ impl WebSocketSession {
                 format!("{}?token={}", wsc.wss_domain, wsc.token))?;
     
         let session = WebSocketSession {
-            wss: Arc::new(WebSocketSessionNonArc {
+            wss: Arc::new(WebSocketSessionInner {
                 wsc,
                 net_client: Mutex::new(net_client),
             })
         };
 
-        let _x = session.start_ping_thread();
+        let _handle = std::thread::spawn(session.ping_loop());
 
         Ok((session, response))
     }
 
-    fn start_ping_thread(&self) -> JoinHandle<()> {
-        let session = WebSocketSession { wss: self.wss.clone() };
-        std::thread::spawn(move || {
+    // Ping. Discard response.
+    fn ping_loop(&self) -> impl Fn() -> () {
+        let session = self.clone();
+        let data = "\"id\": \"0\", \"type\": \"ping\"}";
+
+        move || {
             loop {
-                let msg = tungstenite::Message::Text("\"id\": \"0\", \"type\": \"ping\"}".to_string());
-                let _result = session.send(msg);
+                let msg = tungstenite::Message::Text(data.to_string());
+                session.send(msg).expect("Ping msg send failed");
                 std::thread::sleep(session.wss.wsc.ping_interval);
             }
-        })
+        }
     }
 
     fn send(&self, msg: tungstenite::Message) -> Result<(), tungstenite::Error> {
         self.wss.net_client.lock().unwrap().send(msg)
     }
 
-    fn recv(&self) -> Result<tungstenite::Message, tungstenite::Error> {
-        let msg = self.wss.net_client.lock().unwrap().read()?;
-        
+    fn clone(&self) -> Self {
+        WebSocketSession { wss: self.wss.clone() }
     }
 }
