@@ -7,7 +7,7 @@ fn main() {
     session.subscribe_level2("ETHUSDTM");
     loop {
         println!("Waiting for message");
-        let msg = session.recv_message();
+        let msg = session.recv_level2();
         println!("{:?}", msg);
     }
 }

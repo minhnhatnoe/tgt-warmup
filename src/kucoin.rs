@@ -1,4 +1,9 @@
-use std::{error::Error, net::TcpStream, sync::{Arc, Mutex}, time::Duration};
+use std::{
+    error::Error,
+    net::TcpStream,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use serde_json::json;
 use tungstenite::{handshake::client::Response, stream::MaybeTlsStream, WebSocket};
@@ -74,7 +79,7 @@ impl WebSocketClient {
 }
 
 #[derive(Debug)]
-pub enum WebSocketMessage {
+enum WebSocketMessage {
     Welcome,
     Pong(String),
     Ack(String),
@@ -82,7 +87,7 @@ pub enum WebSocketMessage {
 }
 
 impl WebSocketMessage {
-    pub fn from_string(msg_str: String) -> Self {
+    fn from_string(msg_str: String) -> Self {
         let msg: serde_json::Value = serde_json::from_str(msg_str.as_str()).expect("msg");
 
         let msg_type = msg
@@ -146,6 +151,48 @@ impl WebSocketSessionInner {
     }
 }
 
+#[derive(Debug)]
+pub struct MarketBook {
+    asks: [(f64, i64); 5],
+    bids: [(f64, i64); 5],
+}
+
+impl MarketBook {
+    fn get_asks_bids(data: &serde_json::Value) -> [(f64, i64); 5] {
+        let data = data
+            .as_array()
+            .expect("Data is not an array")
+            .iter()
+            .map(|x| {
+                let price = x
+                    .get(0)
+                    .expect("Cannot get price from ask")
+                    .as_str()
+                    .expect("Price is not a string");
+                let price = price.parse::<f64>().expect("Price is not a float");
+                let size = x
+                    .get(1)
+                    .expect("Cannot get size from ask")
+                    .as_i64()
+                    .expect("Size is not an integer");
+                (price, size)
+            });
+
+        let mut res = [(0.0, 0); 5];
+        for (i, x) in data.enumerate() {
+            res[i] = x;
+        }
+
+        res
+    }
+    pub fn new(asks: &serde_json::Value, bids: &serde_json::Value) -> Self {
+        MarketBook {
+            asks: MarketBook::get_asks_bids(asks),
+            bids: MarketBook::get_asks_bids(bids),
+        }
+    }
+}
+
 pub struct WebSocketSession {
     wss: Arc<WebSocketSessionInner>,
 }
@@ -190,13 +237,19 @@ impl WebSocketSession {
         self.send(tungstenite::Message::Text(data));
     }
 
-    pub fn recv_message(&self) -> serde_json::Value {
+    // Receive Level 2 order book updates.
+    pub fn recv_level2(&self) -> MarketBook {
         let msg = match self.recv() {
-            WebSocketMessage::Message(msg) => msg,
+            WebSocketMessage::Message(v) => v,
             other_type => panic!("Message {:?} not expected", other_type),
         };
 
-        return msg;
+        let msg = msg.get("data").expect("Cannot get data from msg");
+
+        let asks = msg.get("asks").expect("Cannot get asks from msg");
+        let bids = msg.get("bids").expect("Cannot get bids from msg");
+
+        MarketBook::new(asks, bids)
     }
 
     // Ping. Discard response.
