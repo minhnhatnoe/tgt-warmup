@@ -134,7 +134,7 @@ impl WebSocketSession {
         
             let msg: serde_json::Value = serde_json::from_str(msg.as_str())
                 .expect("msg");
-            serde_json::from_value(value)
+
             let msg_type = msg
                 .get("type").expect("Cannot get message type")
                 .as_str().expect("Message type is not string");
