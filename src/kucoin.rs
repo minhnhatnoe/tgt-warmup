@@ -15,15 +15,15 @@ pub struct WebSocketClient {
 impl WebSocketClient {
     /// Constructs a WebSocketClient for connecting with KuCoin's WebSocket API.
     /// Automatically fetches token from KuCoin's API.
-    pub async fn new_with_token() -> Result<Self, Box<dyn Error>> {
+    pub fn new_with_token() -> Result<Self, Box<dyn Error>> {
         let url = format!("{DEFAULT_API_DOMAIN}{DEFAULT_TOKEN_ENDPOINT}");
 
-        let client = reqwest::Client::new();
+        let client = reqwest::blocking::Client::new();
         let resp: serde_json::Value = client
             .post(url)
-            .send().await?
+            .send()?
             .error_for_status()?
-            .json().await?;
+            .json()?;
 
         let wss_domain = match resp["data"]["instanceServers"][0]["endpoint"].to_owned() {
             serde_json::Value::String(s) => s,
@@ -58,7 +58,7 @@ impl WebSocketClient {
         }
     }
 
-    async fn send(&self) {
+    fn send(&self) {
         
     }
 
