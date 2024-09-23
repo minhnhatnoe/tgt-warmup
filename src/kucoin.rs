@@ -1,6 +1,8 @@
 use std::error::Error;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
+use std::sync::{Arc, Mutex};
 use tungstenite::{handshake::client::Response, stream::MaybeTlsStream, WebSocket};
 use std::net::TcpStream;
 
@@ -61,34 +63,49 @@ impl WebSocketClient {
     }
 }
 
-pub struct WebSocketSession {
+struct WebSocketSessionNonArc {
     wsc: WebSocketClient,
-    net_client: WebSocket<MaybeTlsStream<TcpStream>>,
+    net_client: Mutex<WebSocket<MaybeTlsStream<TcpStream>>>,
+}
 
-    ping_thread: std::thread::JoinHandle<()>,
+pub struct WebSocketSession {
+    wss: Arc<WebSocketSessionNonArc>,
 }
 
 impl WebSocketSession {
     pub fn start(wsc: WebSocketClient) -> Result<(WebSocketSession, Response), tungstenite::Error> {
         let (net_client, response) = tungstenite::connect(
                 format!("{}?token={}", wsc.wss_domain, wsc.token))?;
-        
-        let ping_thread = std::thread::spawn(move || {
-            loop {
-                net_client.send(tungstenite::Message::Text("{}"));
-                std::thread::sleep(wsc.ping_interval);
-            }
-        });
-
+    
         let session = WebSocketSession {
-            wsc,
-            net_client,
-            ping_thread,
+            wss: Arc::new(WebSocketSessionNonArc {
+                wsc,
+                net_client: Mutex::new(net_client),
+            })
         };
+
+        let _x = session.start_ping_thread();
 
         Ok((session, response))
     }
 
-    fn send(&self) {
+    fn start_ping_thread(&self) -> JoinHandle<()> {
+        let session = WebSocketSession { wss: self.wss.clone() };
+        std::thread::spawn(move || {
+            loop {
+                let msg = tungstenite::Message::Text("\"id\": \"0\", \"type\": \"ping\"}".to_string());
+                let _result = session.send(msg);
+                std::thread::sleep(session.wss.wsc.ping_interval);
+            }
+        })
+    }
+
+    fn send(&self, msg: tungstenite::Message) -> Result<(), tungstenite::Error> {
+        self.wss.net_client.lock().unwrap().send(msg)
+    }
+
+    fn recv(&self) -> Result<tungstenite::Message, tungstenite::Error> {
+        let msg = self.wss.net_client.lock().unwrap().read()?;
+        
     }
 }
