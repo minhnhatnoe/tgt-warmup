@@ -1,9 +1,11 @@
 use std::error::Error;
 use std::time::Duration;
 
-use std::sync::{Arc, Mutex};
-use tungstenite::{handshake::client::Response, stream::MaybeTlsStream, WebSocket};
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
+
+use tungstenite::{handshake::client::Response, stream::MaybeTlsStream, WebSocket};
+use serde_json::json;
 
 const DEFAULT_API_DOMAIN: &str = "https://api.kucoin.com";
 const DEFAULT_TOKEN_ENDPOINT: &str = "/api/v1/bullet-public";
@@ -110,7 +112,10 @@ impl WebSocketSession {
     // Ping. Discard response.
     fn ping_loop(&self) -> impl Fn() -> () {
         let session = self.clone();
-        let data = "\"id\": \"0\", \"type\": \"ping\"}";
+        let data = json!({
+            "id": 0,
+            "type": "ping"
+        });
 
         move || {
             loop {
