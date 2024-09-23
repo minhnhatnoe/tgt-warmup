@@ -79,6 +79,12 @@ pub struct WebSocketSession {
     wss: Arc<WebSocketSessionInner>,
 }
 
+#[derive(Debug)]
+enum WebSocketMessage {
+    Welcome,
+    Ack(u64),
+}
+
 impl WebSocketSession {
     pub fn start(wsc: WebSocketClient) -> Result<(WebSocketSession, Response), tungstenite::Error> {
         let (net_client, response) = tungstenite::connect(
@@ -90,6 +96,11 @@ impl WebSocketSession {
                 net_client: Mutex::new(net_client),
             })
         };
+
+        match session.recv() {
+            WebSocketMessage::Welcome => println!("Received welcome"),
+            other_type => panic!("Message {:?} not expected", other_type),
+        }
 
         let _handle = std::thread::spawn(session.ping_loop());
 
@@ -106,6 +117,34 @@ impl WebSocketSession {
                 let msg = tungstenite::Message::Text(data.to_string());
                 session.send(msg).expect("Ping msg send failed");
                 std::thread::sleep(session.wss.wsc.ping_interval);
+            }
+        }
+    }
+
+    fn recv(&self) -> WebSocketMessage {
+        loop {
+            let msg = self.wss.net_client.lock().unwrap()
+                .read().expect("msg receive failed")
+                .into_text().expect("Cannot decode received msg");
+        
+            let msg: serde_json::Value = serde_json::from_str(msg.as_str())
+                .expect("msg");
+            serde_json::from_value(value)
+            let msg_type = msg
+                .get("type").expect("Cannot get message type")
+                .as_str().expect("Message type is not string");
+
+            match msg_type {
+                "welcome" => return WebSocketMessage::Welcome,
+                "pong" => (),
+                "ack" => {
+                    let id = msg.get("id")
+                        .expect("Cannot get id of ack")
+                        .as_number().expect("id of ack is not a number")
+                        .as_u64().expect("id of ack is not u64");
+                    return WebSocketMessage::Ack(id);
+                },
+                other_type => panic!("Message type {other_type} not expected")
             }
         }
     }
