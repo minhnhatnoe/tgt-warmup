@@ -17,7 +17,7 @@ print(welcome)
 c.send(json.dumps({
     "id": 1,
     "type": "subscribe",
-    "topic": "/market/ticker:ETH-USDT",
+    "topic": "/contractMarket/level2Depth5:ETHUSDTM",
     "privateChannel": False,
     "response": False
 }))

@@ -1,13 +1,12 @@
 mod kucoin;
 
 fn main() {
-    let client = kucoin::WebSocketClient::new_with_token().unwrap();
-    let (session, _response) = kucoin::WebSocketSession::start(client).unwrap();
+    let credentials = kucoin::Credentials::new_with_token().unwrap();
+    let (_session, response, rx) = kucoin::Session::start(&credentials, "ETHUSDTM").unwrap();
 
-    session.subscribe_level2("ETHUSDTM");
+    println!("Handshake response: {:?}", response);
+
     loop {
-        println!("Waiting for message");
-        let msg = session.recv_level2();
-        println!("{:?}", msg);
+        println!("{:?}", rx.recv());
     }
 }
