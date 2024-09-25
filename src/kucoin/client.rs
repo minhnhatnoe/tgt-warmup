@@ -33,7 +33,6 @@ impl WebSocket {
 
     fn recv(&self) -> Result<String, tungstenite::Error> {
         let msg = self.net_client.lock().unwrap().read()?.into_text()?;
-        println!("Received: {}", msg);
         Ok(msg)
     }
 }
@@ -102,6 +101,7 @@ impl Session {
 
         thread::spawn(move || loop {
             let id_str = id.to_string();
+            // Will be blocked by recv loop. Todo: Use async ws,
             let _ = session.send(ping_string(id_str.as_str()));
 
             let send_time = Instant::now();

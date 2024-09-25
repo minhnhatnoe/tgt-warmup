@@ -1,9 +1,21 @@
 use super::error::RecvError;
+use std::fmt::{Display, Formatter, Error};
 
 #[derive(Debug)]
 pub struct MarketBook {
     asks: [(f64, i64); 5],
     bids: [(f64, i64); 5],
+}
+
+impl Display for MarketBook {
+    // Tabular format
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "{:<10} {:<10}\t\t{:<10} {:<10}\n", "Ask Price", "Ask Size", "Bid Price", "Bid Size")?;
+        for i in 0..5 {
+            write!(f, "{:<10} {:<10}\t\t{:<10} {:<10}\n", self.asks[i].0, self.asks[i].1, self.bids[i].0, self.bids[i].1)?;
+        }
+        Ok(())
+    }
 }
 
 impl MarketBook {

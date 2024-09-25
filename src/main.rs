@@ -7,6 +7,6 @@ fn main() {
     println!("Handshake response: {:?}", response);
 
     loop {
-        println!("{:?}", rx.recv());
+        println!("{}", rx.recv().unwrap());
     }
 }
